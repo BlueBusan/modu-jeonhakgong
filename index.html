@@ -45,6 +45,9 @@
                     <i class="fa-solid fa-share-nodes"></i> 방 링크 복사
                 </button>
                 <span id="syncStatus" class="text-[11px] px-2 py-1 rounded bg-amber-400/20 text-amber-100 border border-amber-300/30">연결 중…</span>
+                <button id="syncTestBtn" class="bg-sky-500 hover:bg-sky-600 text-white text-xs px-3 py-1.5 rounded font-bold transition flex items-center gap-1.5 shadow-sm">
+                    <i class="fa-solid fa-arrows-rotate"></i> 동기화 테스트
+                </button>
                 <div class="flex items-center gap-2">
                     <label class="text-sm text-indigo-100 font-medium">기준일:</label>
                     <input type="date" id="baseDateInput" class="px-2 py-1 rounded bg-indigo-50 text-indigo-900 text-sm font-semibold outline-none focus:ring-2 focus:ring-indigo-400">
@@ -70,8 +73,8 @@
             <div class="p-4 border-b border-slate-100 bg-slate-50/50 flex-shrink-0">
                 <div class="flex items-center justify-between mb-3">
                     <h2 class="text-sm font-bold text-slate-700"><i class="fa-solid fa-users text-indigo-500 mr-1"></i> 참여자 목록 (실시간 공유)</h2>
-                    <button id="addUserBtn" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-700 px-3 py-1.5 rounded-full font-semibold transition-colors flex items-center gap-1">
-                        <i class="fa-solid fa-plus"></i> 참여자 추가
+                    <button id="manageUsersBtn" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-700 px-3 py-1.5 rounded-full font-semibold transition-colors flex items-center gap-1">
+                        <i class="fa-solid fa-user-pen"></i> 구성원 편집
                     </button>
                 </div>
                 <div id="usersContainer" class="flex flex-wrap gap-2 max-h-24 overflow-y-auto custom-scrollbar">
@@ -228,6 +231,23 @@
         </div>
     </div>
 
+    <!-- User Management Modal -->
+    <div id="userManageModal" class="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center hidden">
+        <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6 m-4 fade-in">
+            <div class="flex justify-between items-center mb-4 border-b pb-3">
+                <div>
+                    <h3 class="font-bold text-slate-800 text-lg"><i class="fa-solid fa-users-gear text-indigo-600 mr-1"></i> 구성원 편집</h3>
+                    <p class="text-[11px] text-slate-500 mt-1">일정 화면에서는 구성원을 선택만 할 수 있습니다.</p>
+                </div>
+                <button id="closeUserManageModal" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            <div id="userManageList" class="space-y-2 max-h-72 overflow-y-auto custom-scrollbar"></div>
+            <button id="addUserBtn" class="mt-4 w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg text-sm font-bold transition">
+                <i class="fa-solid fa-user-plus mr-1"></i> 새 구성원 추가
+            </button>
+        </div>
+    </div>
+
     <!-- Date Details Modal for 'All Results' View -->
     <div id="dateDetailsModal" class="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center hidden">
         <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6 m-4 fade-in">
@@ -307,6 +327,7 @@
         let db, auth, roomRef;
         let isRemoteUpdating = false;
         let saveTimer = null;
+        let pendingSyncTest = null;
 
         function setSyncStatus(text, kind = 'ok') {
             const el = document.getElementById('syncStatus');
@@ -337,6 +358,13 @@
                     if (docSnap.exists()) {
                         const remoteData = docSnap.data();
                         setSyncStatus('동기화됨', 'ok');
+                        if (pendingSyncTest && remoteData.syncTestNonce === pendingSyncTest.nonce) {
+                            clearTimeout(pendingSyncTest.timer);
+                            const elapsed = Math.round(performance.now() - pendingSyncTest.startedAt);
+                            pendingSyncTest = null;
+                            setSyncStatus('테스트 정상', 'ok');
+                            showMessage(`✅ 실시간 동기화 정상!\n\nFirestore 쓰기 → 실시간 수신까지 확인했습니다. (${elapsed}ms)`);
+                        }
                         isRemoteUpdating = true;
                         if (remoteData.baseDate) state.baseDate = remoteData.baseDate;
                         if (remoteData.excludeHolidays !== undefined) state.excludeHolidays = remoteData.excludeHolidays;
@@ -363,6 +391,39 @@
                 console.error("Firebase init error:", err);
                 setSyncStatus("연결 실패", "error");
                 showMessage("Firebase 연결 실패: " + (err.code || err.message));
+            }
+        }
+
+        async function runSyncTest() {
+            if (!roomRef || !auth?.currentUser) {
+                showMessage('아직 Firebase 연결이 완료되지 않았습니다. 잠시 후 다시 시도해주세요.');
+                return;
+            }
+            if (pendingSyncTest) {
+                showMessage('동기화 테스트가 이미 진행 중입니다.');
+                return;
+            }
+            const nonce = 'test_' + crypto.randomUUID();
+            setSyncStatus('테스트 중…', 'wait');
+            const timer = setTimeout(() => {
+                if (pendingSyncTest?.nonce === nonce) {
+                    pendingSyncTest = null;
+                    setSyncStatus('테스트 실패', 'error');
+                    showMessage('❌ 동기화 테스트 실패\n\n10초 안에 Firestore 실시간 수신을 확인하지 못했습니다. Firebase Authentication과 Firestore Rules를 확인해주세요.');
+                }
+            }, 10000);
+            pendingSyncTest = { nonce, timer, startedAt: performance.now() };
+            try {
+                await setDoc(roomRef, {
+                    syncTestNonce: nonce,
+                    syncTestBy: auth.currentUser.uid,
+                    syncTestAt: serverTimestamp()
+                }, { merge: true });
+            } catch (err) {
+                clearTimeout(timer);
+                pendingSyncTest = null;
+                setSyncStatus('테스트 실패', 'error');
+                showMessage('❌ 동기화 테스트 실패: ' + (err.code || err.message));
             }
         }
 
@@ -406,6 +467,10 @@
             customSchEnd: document.getElementById('customSchEnd'),
             addCustomSchBtn: document.getElementById('addCustomSchBtn'),
             usersContainer: document.getElementById('usersContainer'),
+            manageUsersBtn: document.getElementById('manageUsersBtn'),
+            userManageModal: document.getElementById('userManageModal'),
+            closeUserManageModal: document.getElementById('closeUserManageModal'),
+            userManageList: document.getElementById('userManageList'),
             addUserBtn: document.getElementById('addUserBtn'),
             calendarTitle: document.getElementById('calendarTitle'),
             calendarDays: document.getElementById('calendarDays'),
@@ -534,18 +599,17 @@
 
         window.removeUser = (id) => {
             if (state.users.length <= 1) {
-                showMessage("최소 1명의 참여자는 유지해야 합니다.");
+                showMessage("최소 1명의 구성원은 유지해야 합니다.");
                 return;
             }
+            const user = state.users.find(u => u.id === id);
+            if (!user) return;
+            const count = user.unavailabilities?.length || 0;
+            if (!confirm(`정말 '${user.name}' 구성원을 삭제하시겠습니까?\n\n등록된 불가 일정 ${count}개도 함께 삭제됩니다.`)) return;
             state.users = state.users.filter(u => u.id !== id);
-            if (state.selectedUserId === id) {
-                state.selectedUserId = state.users[0].id;
-            }
+            if (state.selectedUserId === id) state.selectedUserId = state.users[0].id;
             syncToFirestore();
-            renderUsers();
-            renderCalendar();
-            renderInputPanel();
-            calculateAndRenderResults();
+            renderUsers(); renderUserManager(); renderCalendar(); renderInputPanel(); calculateAndRenderResults();
         };
 
         window.selectDate = (dateStr) => {
@@ -614,42 +678,42 @@
 
         function renderUsers() {
             els.usersContainer.innerHTML = '';
-            
             const isAllSelected = state.selectedUserId === 'ALL';
             const allBtn = document.createElement('div');
-            allBtn.className = `flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium cursor-pointer transition-all border ${
-                isAllSelected ? 'bg-slate-800 text-white border-slate-900 shadow-md scale-105' 
-                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100 hover:border-slate-300'
-            }`;
+            allBtn.className = `flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium cursor-pointer transition-all border ${isAllSelected ? 'bg-slate-800 text-white border-slate-900 shadow-md scale-105' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100 hover:border-slate-300'}`;
             allBtn.innerHTML = `<span><i class="fa-solid fa-list-check"></i> 전체결과보기</span>`;
             allBtn.onclick = () => selectUser('ALL');
             els.usersContainer.appendChild(allBtn);
-
             state.users.forEach(user => {
                 const isSelected = user.id === state.selectedUserId;
                 const totalUnavail = user.unavailabilities.length;
-                
-                const btn = document.createElement('div');
-                btn.className = `flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-all border ${
-                    isSelected ? 'bg-indigo-600 text-white border-indigo-700 shadow-md scale-105' 
-                               : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100 hover:border-slate-300'
-                }`;
-                
-                if(isSelected) {
-                    btn.innerHTML = `
-                        <input type="text" value="${user.name}" class="bg-transparent border-b border-indigo-300 outline-none w-20 text-white placeholder-indigo-200 text-sm name-input" 
-                               onchange="updateUserName(${user.id}, this.value)" onclick="event.stopPropagation()">
-                        ${totalUnavail > 0 ? `<span class="bg-indigo-800 text-indigo-100 text-[10px] px-1.5 py-0.5 rounded-full">${totalUnavail}</span>` : ''}
-                        <button class="text-indigo-300 hover:text-white ml-1" onclick="removeUser(${user.id}); event.stopPropagation();"><i class="fa-solid fa-xmark"></i></button>
-                    `;
-                } else {
-                    btn.innerHTML = `
-                        <span>${user.name}</span>
-                        ${totalUnavail > 0 ? `<span class="bg-slate-200 text-slate-600 text-[10px] px-1.5 py-0.5 rounded-full">${totalUnavail}</span>` : ''}
-                    `;
-                    btn.onclick = () => { selectUser(user.id); };
-                }
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = `flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-all border ${isSelected ? 'bg-indigo-600 text-white border-indigo-700 shadow-md scale-105' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100 hover:border-slate-300'}`;
+                btn.innerHTML = `<span>${user.name}</span>${totalUnavail > 0 ? `<span class="${isSelected ? 'bg-indigo-800 text-indigo-100' : 'bg-slate-200 text-slate-600'} text-[10px] px-1.5 py-0.5 rounded-full">${totalUnavail}</span>` : ''}`;
+                btn.onclick = () => selectUser(user.id);
                 els.usersContainer.appendChild(btn);
+            });
+        }
+
+        function renderUserManager() {
+            if (!els.userManageList) return;
+            els.userManageList.innerHTML = '';
+            state.users.forEach(user => {
+                const row = document.createElement('div');
+                row.className = 'flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg p-2';
+                const input = document.createElement('input');
+                input.type = 'text'; input.value = user.name;
+                input.className = 'flex-1 min-w-0 px-3 py-2 bg-white border border-slate-200 rounded text-sm outline-none focus:border-indigo-500';
+                input.onchange = () => { updateUserName(user.id, input.value); renderUsers(); };
+                const badge = document.createElement('span');
+                badge.className = 'text-[10px] text-slate-500 whitespace-nowrap';
+                badge.textContent = `일정 ${user.unavailabilities.length}개`;
+                const del = document.createElement('button');
+                del.className = 'text-red-500 hover:bg-red-50 px-2 py-2 rounded';
+                del.title = '구성원 삭제'; del.innerHTML = '<i class="fa-regular fa-trash-can"></i>';
+                del.onclick = () => removeUser(user.id);
+                row.append(input, badge, del); els.userManageList.appendChild(row);
             });
         }
 
@@ -955,11 +1019,16 @@
                 renderCalendar();
             };
 
+            els.manageUsersBtn.onclick = () => { renderUserManager(); els.userManageModal.classList.remove('hidden'); };
+            els.closeUserManageModal.onclick = () => els.userManageModal.classList.add('hidden');
+            els.userManageModal.onclick = (e) => { if (e.target === els.userManageModal) els.userManageModal.classList.add('hidden'); };
+
             els.addUserBtn.onclick = () => {
                 const newId = state.users.length > 0 ? Math.max(...state.users.map(u => u.id)) + 1 : 1;
                 state.users.push({ id: newId, name: `참여자 ${newId}`, unavailabilities: [] });
                 selectUser(newId);
                 syncToFirestore();
+                renderUserManager();
                 calculateAndRenderResults();
             };
 
