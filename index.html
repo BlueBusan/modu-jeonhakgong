@@ -1,0 +1,1088 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>모두의 전학공 찾기 - 실시간 공유</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: 'Inter', 'Pretendard', sans-serif; }
+        
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #c7d2fe; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #a5b4fc; }
+
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: auto repeat(7, 1fr);
+            gap: 4px;
+        }
+
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden">
+
+    <header class="bg-indigo-600 text-white p-4 shadow-md z-20 flex-shrink-0">
+        <div class="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
+            <div class="flex items-center gap-3">
+                <i class="fa-regular fa-calendar-check text-3xl text-indigo-200"></i>
+                <div>
+                    <h1 class="text-2xl font-bold tracking-tight">모두의 전학공 찾기</h1>
+                    <p class="text-indigo-200 text-xs mt-0.5">월~금 14:20~16:20 중 모두가 비어있는 정밀 시간을 찾습니다 (실시간 동기화)</p>
+                </div>
+            </div>
+            
+            <div class="flex flex-wrap items-center gap-3 bg-indigo-700/50 p-2.5 rounded-lg border border-indigo-500/50">
+                <!-- Share Room Button -->
+                <button id="shareRoomBtn" class="bg-emerald-500 hover:bg-emerald-600 text-white text-xs px-3 py-1.5 rounded font-bold transition flex items-center gap-1.5 shadow-sm">
+                    <i class="fa-solid fa-share-nodes"></i> 방 링크 복사
+                </button>
+                <span id="syncStatus" class="text-[11px] px-2 py-1 rounded bg-amber-400/20 text-amber-100 border border-amber-300/30">연결 중…</span>
+                <div class="flex items-center gap-2">
+                    <label class="text-sm text-indigo-100 font-medium">기준일:</label>
+                    <input type="date" id="baseDateInput" class="px-2 py-1 rounded bg-indigo-50 text-indigo-900 text-sm font-semibold outline-none focus:ring-2 focus:ring-indigo-400">
+                </div>
+                <label class="flex items-center gap-2 text-sm text-indigo-100 cursor-pointer hover:text-white transition-colors">
+                    <input type="checkbox" id="excludeHolidaysToggle" checked class="rounded text-indigo-500 w-4 h-4 cursor-pointer">
+                    공휴일 제외
+                </label>
+                <!-- 자체 일정 추가 버튼 (요청하신 대로 제목 변경) -->
+                <button id="openCustomHolidayModal" class="bg-indigo-500 hover:bg-indigo-400 text-white text-xs px-2.5 py-1.5 rounded font-medium transition flex items-center gap-1 shadow-sm">
+                    <i class="fa-solid fa-calendar-plus"></i> 자체 일정 추가
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-7xl w-full mx-auto flex flex-col md:flex-row overflow-hidden">
+        
+        <!-- Left Pane: Users & Calendar -->
+        <section class="w-full md:w-3/5 lg:w-2/3 flex flex-col bg-white border-r border-slate-200 shadow-sm z-10 relative">
+            
+            <!-- Users Tab -->
+            <div class="p-4 border-b border-slate-100 bg-slate-50/50 flex-shrink-0">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="text-sm font-bold text-slate-700"><i class="fa-solid fa-users text-indigo-500 mr-1"></i> 참여자 목록 (실시간 공유)</h2>
+                    <button id="addUserBtn" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-700 px-3 py-1.5 rounded-full font-semibold transition-colors flex items-center gap-1">
+                        <i class="fa-solid fa-plus"></i> 참여자 추가
+                    </button>
+                </div>
+                <div id="usersContainer" class="flex flex-wrap gap-2 max-h-24 overflow-y-auto custom-scrollbar">
+                    <!-- Users rendered dynamically -->
+                </div>
+            </div>
+
+            <!-- Calendar & Input Panel Area -->
+            <div class="flex-1 flex flex-col overflow-hidden">
+                
+                <!-- Calendar -->
+                <div class="p-4 flex-1 flex flex-col min-h-0">
+                    <div class="flex justify-between items-center mb-4 px-2">
+                        <button id="prevMonthBtn" class="p-2 rounded hover:bg-slate-100 text-slate-500 transition"><i class="fa-solid fa-chevron-left"></i></button>
+                        <h3 id="calendarTitle" class="text-lg font-bold text-slate-800">2026년 9월</h3>
+                        <button id="nextMonthBtn" class="p-2 rounded hover:bg-slate-100 text-slate-500 transition"><i class="fa-solid fa-chevron-right"></i></button>
+                    </div>
+
+                    <!-- Calendar Grid -->
+                    <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex-1 flex flex-col">
+                        <div class="calendar-grid bg-slate-50 border-b border-slate-200">
+                            <div class="text-center py-2 text-[10px] font-bold text-slate-400">주차</div>
+                            <div class="text-center py-2 text-xs font-bold text-red-500">일</div>
+                            <div class="text-center py-2 text-xs font-bold text-slate-700">월</div>
+                            <div class="text-center py-2 text-xs font-bold text-slate-700">화</div>
+                            <div class="text-center py-2 text-xs font-bold text-slate-700">수</div>
+                            <div class="text-center py-2 text-xs font-bold text-slate-700">목</div>
+                            <div class="text-center py-2 text-xs font-bold text-slate-700">금</div>
+                            <div class="text-center py-2 text-xs font-bold text-blue-500">토</div>
+                        </div>
+                        <div id="calendarDays" class="flex-1 flex flex-col">
+                            <!-- Days rendered dynamically -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Bottom Input Panel -->
+                <div id="inputPanel" class="hidden bg-indigo-50 border-t border-indigo-100 p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] flex-shrink-0 fade-in">
+                    <div class="flex justify-between items-start mb-3">
+                        <h4 class="font-bold text-indigo-900 flex items-center gap-2">
+                            <i class="fa-regular fa-pen-to-square text-indigo-500"></i>
+                            <span id="inputPanelDateTitle">2026-09-10</span> 불가능한 시간 등록
+                        </h4>
+                        <button id="closePanelBtn" class="text-indigo-400 hover:text-indigo-700"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                    
+                    <div class="flex flex-col sm:flex-row gap-3 items-end">
+                        <div class="flex gap-2 w-full sm:w-auto">
+                            <div class="flex-1">
+                                <label class="block text-xs text-indigo-700 mb-1 font-medium">시작 (14:20~)</label>
+                                <input type="time" id="startTimeInput" min="14:20" max="16:20" value="14:20" required class="w-full px-2 py-1.5 rounded border border-indigo-200 focus:outline-none focus:border-indigo-500 text-sm bg-white">
+                            </div>
+                            <div class="flex-1">
+                                <label class="block text-xs text-indigo-700 mb-1 font-medium">종료 (~16:20)</label>
+                                <input type="time" id="endTimeInput" min="14:20" max="16:20" value="16:20" required class="w-full px-2 py-1.5 rounded border border-indigo-200 focus:outline-none focus:border-indigo-500 text-sm bg-white">
+                            </div>
+                        </div>
+                        <div class="flex-1 w-full">
+                            <label class="block text-xs text-indigo-700 mb-1 font-medium">사유 (선택)</label>
+                            <input type="text" id="reasonInput" placeholder="예: 전공 수업, 병원 등" class="w-full px-3 py-1.5 rounded border border-indigo-200 focus:outline-none focus:border-indigo-500 text-sm bg-white">
+                        </div>
+                        <button id="addTimeBtn" class="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded font-medium text-sm transition-colors shadow-sm">
+                            등록
+                        </button>
+                    </div>
+
+                    <div class="mt-4">
+                        <h5 class="text-xs font-semibold text-indigo-800 mb-2 border-b border-indigo-200 pb-1">이 날짜에 등록된 내 불가 일정</h5>
+                        <ul id="selectedDateUnavailList" class="space-y-1.5 max-h-24 overflow-y-auto custom-scrollbar">
+                            <!-- Unavailabilities rendered dynamically -->
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Right Pane: Available Times -->
+        <section class="w-full md:w-2/5 lg:w-1/3 bg-slate-50 flex flex-col h-full z-0 border-t md:border-t-0 md:border-l border-slate-200 overflow-hidden">
+            <div class="p-4 md:p-6 bg-white border-b border-slate-200 flex-shrink-0 shadow-sm z-10">
+                <h2 class="text-lg font-bold text-teal-700 flex items-center gap-2">
+                    <i class="fa-solid fa-circle-check text-teal-500"></i>
+                    모두가 가능한 시간
+                </h2>
+                <p class="text-xs text-slate-500 mt-1">기준일로부터 180일간 (평일 14:20~16:20) 검토 결과입니다.</p>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto p-4 custom-scrollbar bg-slate-50" id="resultsContainer">
+                <!-- Results rendered dynamically -->
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Custom Holiday & Schedule Modal (Order: 1. Holiday, 2. Schedule) -->
+    <div id="holidayModal" class="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center hidden">
+        <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6 m-4 fade-in">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="font-bold text-slate-800 text-lg flex items-center gap-2">
+                    <i class="fa-solid fa-calendar-day text-indigo-600"></i> 자체 일정 추가
+                </h3>
+                <button id="closeHolidayModal" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            
+            <!-- 1. 공휴일추가 섹션 -->
+            <div class="mb-5">
+                <h4 class="font-bold text-slate-700 text-sm flex items-center gap-1.5 mb-1.5">
+                    <i class="fa-solid fa-calendar-xmark text-indigo-500"></i> 공휴일 추가 (휴무일 지정)
+                </h4>
+                <p class="text-[11px] text-slate-500 mb-2">학교 축제, 임시 휴일 등 공강 계산에서 제외할 날짜를 추가합니다.</p>
+                
+                <div class="flex gap-2 mb-2">
+                    <input type="date" id="newHolidayDate" class="flex-1 px-3 py-1.5 border border-slate-200 rounded text-sm outline-none focus:border-indigo-500">
+                    <input type="text" id="newHolidayName" placeholder="사유 (예: 대학 축제)" class="flex-1 px-3 py-1.5 border border-slate-200 rounded text-sm outline-none focus:border-indigo-500">
+                    <button id="addHolidayBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-sm font-medium transition shadow-sm">추가</button>
+                </div>
+
+                <div class="border border-slate-200 rounded-lg overflow-hidden">
+                    <div class="bg-slate-50 px-3 py-1.5 text-[11px] font-bold text-slate-600 border-b border-slate-200">추가된 커스텀 공휴일 목록</div>
+                    <ul id="customHolidayList" class="max-h-28 overflow-y-auto custom-scrollbar divide-y divide-slate-100 text-xs">
+                        <!-- Holidays rendered dynamically -->
+                    </ul>
+                </div>
+            </div>
+
+            <!-- 2. 일정추가 섹션 (시간단위 불가능한 시간 설정) -->
+            <div class="border-t border-slate-200 pt-4">
+                <h4 class="font-bold text-slate-700 text-sm flex items-center gap-1.5 mb-1.5">
+                    <i class="fa-solid fa-clock text-indigo-500"></i> 일정 추가 (전체 참여자 불가 시간)
+                </h4>
+                <p class="text-[11px] text-slate-500 mb-2.5">특정 날짜 및 시간대를 모든 참여자의 불가능한 시간으로 일괄 추가합니다.</p>
+                
+                <div class="grid grid-cols-2 gap-2 mb-2">
+                    <div>
+                        <label class="block text-[11px] text-slate-600 mb-1">날짜</label>
+                        <input type="date" id="customSchDate" class="w-full px-2.5 py-1.5 border border-slate-200 rounded text-sm outline-none focus:border-indigo-500 bg-white">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] text-slate-600 mb-1">사유</label>
+                        <input type="text" id="customSchReason" placeholder="예: 학과 전체 행사" class="w-full px-2.5 py-1.5 border border-slate-200 rounded text-sm outline-none focus:border-indigo-500 bg-white">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2 mb-3">
+                    <div>
+                        <label class="block text-[11px] text-slate-600 mb-1">시작 시간 (14:20~)</label>
+                        <input type="time" id="customSchStart" min="14:20" max="16:20" value="14:20" class="w-full px-2.5 py-1.5 border border-slate-200 rounded text-sm outline-none focus:border-indigo-500 bg-white">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] text-slate-600 mb-1">종료 시간 (~16:20)</label>
+                        <input type="time" id="customSchEnd" min="14:20" max="16:20" value="16:20" class="w-full px-2.5 py-1.5 border border-slate-200 rounded text-sm outline-none focus:border-indigo-500 bg-white">
+                    </div>
+                </div>
+                <button id="addCustomSchBtn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded text-sm font-medium transition shadow-sm">일정 등록</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Date Details Modal for 'All Results' View -->
+    <div id="dateDetailsModal" class="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center hidden">
+        <div class="bg-white rounded-xl shadow-xl max-w-md w-full p-6 m-4 fade-in">
+            <div class="flex justify-between items-center mb-4 border-b pb-2">
+                <h3 id="dateDetailsTitle" class="font-bold text-slate-800 text-lg flex items-center gap-2">
+                    <i class="fa-regular fa-calendar text-indigo-600"></i> 날짜 상세 정보
+                </h3>
+                <button id="closeDateDetailsModal" class="text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            <div id="dateDetailsContent" class="max-h-64 overflow-y-auto custom-scrollbar space-y-3 text-sm">
+                <!-- Details rendered dynamically -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Notification/Message Box -->
+    <div id="msgModal" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center hidden">
+        <div class="bg-white rounded-xl shadow-xl max-w-xs w-full p-5 m-4 text-center fade-in">
+            <div id="msgIcon" class="text-3xl text-indigo-600 mb-2"><i class="fa-solid fa-circle-info"></i></div>
+            <p id="msgText" class="text-sm text-slate-700 font-medium mb-4">알림 메시지입니다.</p>
+            <button id="msgOkBtn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded text-sm font-medium transition shadow-sm">확인</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+
+        const MIN_TIME = 14 * 60 + 20; // 14:20 in minutes (860)
+        const MAX_TIME = 16 * 60 + 20; // 16:20 in minutes (980)
+        const TOTAL_DURATION = MAX_TIME - MIN_TIME; // 120 mins
+
+        const KOREAN_HOLIDAYS = {
+            '2026-01-01': '신정', '2026-02-16': '설날 연휴', '2026-02-17': '설날', '2026-02-18': '설날 연휴',
+            '2026-03-01': '삼일절', '2026-03-02': '대체공휴일(삼일절)', '2026-05-05': '어린이날',
+            '2026-05-24': '부처님오신날', '2026-05-25': '대체공휴일(부처님오신날)', '2026-06-03': '지방선거',
+            '2026-06-06': '현충일', '2026-08-15': '광복절', '2026-08-17': '대체공휴일(광복절)',
+            '2026-09-24': '추석 연휴', '2026-09-25': '추석', '2026-09-26': '추석 연휴',
+            '2026-10-03': '개천절', '2026-10-05': '대체공휴일(개천절)', '2026-10-09': '한글날', '2026-12-25': '성탄절'
+        };
+
+        // Application State
+        let state = {
+            baseDate: new Date().toISOString().split('T')[0],
+            calendarMonth: new Date(),
+            excludeHolidays: true,
+            customHolidays: {},
+            users: [
+                { id: 1, name: '참여자 1', unavailabilities: [] },
+                { id: 2, name: '참여자 2', unavailabilities: [] }
+            ],
+            selectedUserId: 1,
+            selectedDate: null
+        };
+
+        // Room & Firebase setup with safe fallback for blob environment
+        const appId = 'modu-jeonhakgong-app';
+        const firebaseConfig = {
+            apiKey: "AIzaSyC_ISN8MCAb4pX3BAWmfZ5mwxuXUzO-jvo",
+            authDomain: "modu-jeonhakgong.firebaseapp.com",
+            projectId: "modu-jeonhakgong",
+            storageBucket: "modu-jeonhakgong.firebasestorage.app",
+            messagingSenderId: "251268817306",
+            appId: "1:251268817306:web:4261a912f0481c92f19a23"
+        };
+        
+        const urlParams = new URLSearchParams(window.location.search);
+        let roomId = urlParams.get('room');
+        if (!roomId) {
+            roomId = 'room_' + crypto.randomUUID().replaceAll('-', '');
+            const u = new URL(window.location.href);
+            u.searchParams.set('room', roomId);
+            history.replaceState(null, '', u.toString());
+        }
+
+        let db, auth, roomRef;
+        let isRemoteUpdating = false;
+        let saveTimer = null;
+
+        function setSyncStatus(text, kind = 'ok') {
+            const el = document.getElementById('syncStatus');
+            if (!el) return;
+            el.textContent = text;
+            el.className = 'text-[11px] px-2 py-1 rounded border ' + (
+                kind === 'error' ? 'bg-rose-400/20 text-rose-100 border-rose-300/30' :
+                kind === 'wait' ? 'bg-amber-400/20 text-amber-100 border-amber-300/30' :
+                'bg-emerald-400/20 text-emerald-100 border-emerald-300/30'
+            );
+        }
+
+        async function initFirebase() {
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                
+                const credential = await signInAnonymously(auth);
+                console.info('[Firebase] anonymous auth OK', credential.user.uid);
+                setSyncStatus('연결됨', 'ok');
+
+                // Firestore paths must alternate collection/document (even number of segments)
+                roomRef = doc(db, 'rooms', roomId);
+
+                // Real-time listener
+                onSnapshot(roomRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        const remoteData = docSnap.data();
+                        setSyncStatus('동기화됨', 'ok');
+                        isRemoteUpdating = true;
+                        if (remoteData.baseDate) state.baseDate = remoteData.baseDate;
+                        if (remoteData.excludeHolidays !== undefined) state.excludeHolidays = remoteData.excludeHolidays;
+                        if (remoteData.customHolidays) state.customHolidays = remoteData.customHolidays;
+                        if (remoteData.users) state.users = remoteData.users;
+                        
+                        els.baseDateInput.value = state.baseDate;
+                        els.excludeHolidaysToggle.checked = state.excludeHolidays;
+
+                        renderUsers();
+                        renderCalendar();
+                        renderInputPanel();
+                        calculateAndRenderResults();
+                        isRemoteUpdating = false;
+                    } else {
+                        syncToFirestore();
+                    }
+                }, (error) => {
+                    console.error("Firestore sync error:", error);
+                    setSyncStatus("동기화 오류", "error");
+                    showMessage("Firestore 연결 오류: " + (error.code || error.message));
+                });
+            } catch (err) {
+                console.error("Firebase init error:", err);
+                setSyncStatus("연결 실패", "error");
+                showMessage("Firebase 연결 실패: " + (err.code || err.message));
+            }
+        }
+
+        function syncToFirestore() {
+            if (!roomRef || isRemoteUpdating) return;
+            clearTimeout(saveTimer);
+            setSyncStatus('저장 중…', 'wait');
+            saveTimer = setTimeout(async () => {
+                try {
+                    await setDoc(roomRef, {
+                        baseDate: state.baseDate,
+                        excludeHolidays: state.excludeHolidays,
+                        customHolidays: state.customHolidays,
+                        users: state.users,
+                        updatedAt: serverTimestamp()
+                    }, { merge: true });
+                    setSyncStatus('저장됨', 'ok');
+                } catch (err) {
+                    console.error('Save error:', err);
+                    setSyncStatus('저장 실패', 'error');
+                    showMessage('저장 실패: ' + (err.code || err.message));
+                }
+            }, 120);
+        }
+
+        // DOM Elements
+        const els = {
+            baseDateInput: document.getElementById('baseDateInput'),
+            excludeHolidaysToggle: document.getElementById('excludeHolidaysToggle'),
+            shareRoomBtn: document.getElementById('shareRoomBtn'),
+            openCustomHolidayModal: document.getElementById('openCustomHolidayModal'),
+            holidayModal: document.getElementById('holidayModal'),
+            closeHolidayModal: document.getElementById('closeHolidayModal'),
+            newHolidayDate: document.getElementById('newHolidayDate'),
+            newHolidayName: document.getElementById('newHolidayName'),
+            addHolidayBtn: document.getElementById('addHolidayBtn'),
+            customHolidayList: document.getElementById('customHolidayList'),
+            customSchDate: document.getElementById('customSchDate'),
+            customSchReason: document.getElementById('customSchReason'),
+            customSchStart: document.getElementById('customSchStart'),
+            customSchEnd: document.getElementById('customSchEnd'),
+            addCustomSchBtn: document.getElementById('addCustomSchBtn'),
+            usersContainer: document.getElementById('usersContainer'),
+            addUserBtn: document.getElementById('addUserBtn'),
+            calendarTitle: document.getElementById('calendarTitle'),
+            calendarDays: document.getElementById('calendarDays'),
+            prevMonthBtn: document.getElementById('prevMonthBtn'),
+            nextMonthBtn: document.getElementById('nextMonthBtn'),
+            inputPanel: document.getElementById('inputPanel'),
+            inputPanelDateTitle: document.getElementById('inputPanelDateTitle'),
+            closePanelBtn: document.getElementById('closePanelBtn'),
+            startTimeInput: document.getElementById('startTimeInput'),
+            endTimeInput: document.getElementById('endTimeInput'),
+            reasonInput: document.getElementById('reasonInput'),
+            addTimeBtn: document.getElementById('addTimeBtn'),
+            selectedDateUnavailList: document.getElementById('selectedDateUnavailList'),
+            resultsContainer: document.getElementById('resultsContainer'),
+            dateDetailsModal: document.getElementById('dateDetailsModal'),
+            dateDetailsTitle: document.getElementById('dateDetailsTitle'),
+            dateDetailsContent: document.getElementById('dateDetailsContent'),
+            closeDateDetailsModal: document.getElementById('closeDateDetailsModal'),
+            msgModal: document.getElementById('msgModal'),
+            msgText: document.getElementById('msgText'),
+            msgOkBtn: document.getElementById('msgOkBtn')
+        };
+
+        function showMessage(text) {
+            els.msgText.textContent = text;
+            els.msgModal.classList.remove('hidden');
+        }
+        els.msgOkBtn.onclick = () => els.msgModal.classList.add('hidden');
+
+        const formatDate = (d) => {
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        };
+
+        const getWeekNumber = (d) => {
+            const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+            const dayNum = date.getUTCDay() || 7;
+            date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+            const yearStart = new Date(Date.UTC(date.getUTCFullYear(),0,1));
+            return Math.ceil((((date - yearStart) / 86400000) + 1)/7);
+        };
+
+        const timeToMins = (timeStr) => {
+            const [h, m] = timeStr.split(':').map(Number);
+            return h * 60 + m;
+        };
+
+        const minsToTime = (mins) => {
+            const h = Math.floor(mins / 60);
+            const m = mins % 60;
+            return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+        };
+
+        const isHolidayDate = (dateStr) => {
+            return !!KOREAN_HOLIDAYS[dateStr] || !!state.customHolidays[dateStr];
+        };
+
+        const getHolidayName = (dateStr) => {
+            return KOREAN_HOLIDAYS[dateStr] || state.customHolidays[dateStr] || '';
+        };
+
+        function getAvailableIntervalsForDate(dateStr) {
+            let allUnavailsMins = [];
+            state.users.forEach(user => {
+                user.unavailabilities.filter(u => u.date === dateStr).forEach(u => {
+                    allUnavailsMins.push({
+                        start: timeToMins(u.startTime),
+                        end: timeToMins(u.endTime)
+                    });
+                });
+            });
+
+            allUnavailsMins.sort((a, b) => a.start - b.start);
+            let mergedUnavails = [];
+            if (allUnavailsMins.length > 0) {
+                let current = allUnavailsMins[0];
+                for (let j = 1; j < allUnavailsMins.length; j++) {
+                    if (allUnavailsMins[j].start <= current.end) {
+                        current.end = Math.max(current.end, allUnavailsMins[j].end);
+                    } else {
+                        mergedUnavails.push(current);
+                        current = allUnavailsMins[j];
+                    }
+                }
+                mergedUnavails.push(current);
+            }
+
+            let availableIntervals = [{ start: MIN_TIME, end: MAX_TIME }];
+            for (let unavail of mergedUnavails) {
+                let nextAvailable = [];
+                for (let slot of availableIntervals) {
+                    if (unavail.end <= slot.start || unavail.start >= slot.end) {
+                        nextAvailable.push(slot);
+                    } else {
+                        if (unavail.start > slot.start) {
+                            nextAvailable.push({ start: slot.start, end: unavail.start });
+                        }
+                        if (unavail.end < slot.end) {
+                            nextAvailable.push({ start: unavail.end, end: slot.end });
+                        }
+                    }
+                }
+                availableIntervals = nextAvailable;
+            }
+            return availableIntervals.filter(slot => (slot.end - slot.start) > 0);
+        }
+
+        window.selectUser = (id) => {
+            state.selectedUserId = id;
+            if (id === 'ALL') {
+                state.selectedDate = null;
+            }
+            renderUsers();
+            renderCalendar();
+            renderInputPanel();
+        };
+
+        window.updateUserName = (id, newName) => {
+            const user = state.users.find(u => u.id === id);
+            if (user) user.name = newName.trim() || `참여자 ${id}`;
+            syncToFirestore();
+            calculateAndRenderResults();
+        };
+
+        window.removeUser = (id) => {
+            if (state.users.length <= 1) {
+                showMessage("최소 1명의 참여자는 유지해야 합니다.");
+                return;
+            }
+            state.users = state.users.filter(u => u.id !== id);
+            if (state.selectedUserId === id) {
+                state.selectedUserId = state.users[0].id;
+            }
+            syncToFirestore();
+            renderUsers();
+            renderCalendar();
+            renderInputPanel();
+            calculateAndRenderResults();
+        };
+
+        window.selectDate = (dateStr) => {
+            if (state.selectedUserId === 'ALL') {
+                showMessage("개인별 불가능한 일정을 등록하려면 특정 참여자를 먼저 선택해주세요.");
+                return;
+            }
+            state.selectedDate = dateStr;
+            renderCalendar();
+            renderInputPanel();
+        };
+
+        window.removeUnavailability = (unavailId) => {
+            const activeUser = state.users.find(u => u.id === state.selectedUserId);
+            if (activeUser) {
+                activeUser.unavailabilities = activeUser.unavailabilities.filter(u => u.id !== unavailId);
+                syncToFirestore();
+                renderInputPanel();
+                renderCalendar();
+                calculateAndRenderResults();
+            }
+        };
+
+        window.removeCustomHoliday = (dateStr) => {
+            delete state.customHolidays[dateStr];
+            syncToFirestore();
+            renderCustomHolidaysList();
+            renderCalendar();
+            calculateAndRenderResults();
+        };
+
+        window.openDateDetails = (dateStr) => {
+            const d = new Date(dateStr);
+            const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+            const dayName = dayNames[d.getDay()];
+            
+            els.dateDetailsTitle.innerHTML = `<i class="fa-regular fa-calendar text-indigo-600"></i> ${dateStr} (${dayName}) 불가 일정`;
+            
+            let html = '';
+            let totalUnavailsFound = false;
+
+            state.users.forEach(user => {
+                const userUnavails = user.unavailabilities.filter(u => u.date === dateStr);
+                if (userUnavails.length > 0) {
+                    totalUnavailsFound = true;
+                    html += `<div class="bg-slate-50 border border-slate-200 rounded-lg p-3">`;
+                    html += `<div class="font-bold text-slate-700 text-xs mb-1.5 flex items-center gap-1"><i class="fa-solid fa-user text-indigo-500"></i> ${user.name}</div>`;
+                    html += `<ul class="space-y-1">`;
+                    userUnavails.forEach(u => {
+                        html += `<li class="text-xs text-slate-600 flex justify-between bg-white px-2 py-1 rounded border border-slate-100">
+                            <span class="font-semibold text-rose-600">${u.startTime} ~ ${u.endTime}</span>
+                            <span>${u.reason ? u.reason : '사유 없음'}</span>
+                        </li>`;
+                    });
+                    html += `</ul></div>`;
+                }
+            });
+
+            if (!totalUnavailsFound) {
+                html = `<div class="text-center py-6 text-slate-400 text-sm">이 날짜에 등록된 불가능한 일정이 없습니다 (모두 전체 가능).</div>`;
+            }
+
+            els.dateDetailsContent.innerHTML = html;
+            els.dateDetailsModal.classList.remove('hidden');
+        };
+
+        function renderUsers() {
+            els.usersContainer.innerHTML = '';
+            
+            const isAllSelected = state.selectedUserId === 'ALL';
+            const allBtn = document.createElement('div');
+            allBtn.className = `flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium cursor-pointer transition-all border ${
+                isAllSelected ? 'bg-slate-800 text-white border-slate-900 shadow-md scale-105' 
+                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100 hover:border-slate-300'
+            }`;
+            allBtn.innerHTML = `<span><i class="fa-solid fa-list-check"></i> 전체결과보기</span>`;
+            allBtn.onclick = () => selectUser('ALL');
+            els.usersContainer.appendChild(allBtn);
+
+            state.users.forEach(user => {
+                const isSelected = user.id === state.selectedUserId;
+                const totalUnavail = user.unavailabilities.length;
+                
+                const btn = document.createElement('div');
+                btn.className = `flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-all border ${
+                    isSelected ? 'bg-indigo-600 text-white border-indigo-700 shadow-md scale-105' 
+                               : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100 hover:border-slate-300'
+                }`;
+                
+                if(isSelected) {
+                    btn.innerHTML = `
+                        <input type="text" value="${user.name}" class="bg-transparent border-b border-indigo-300 outline-none w-20 text-white placeholder-indigo-200 text-sm name-input" 
+                               onchange="updateUserName(${user.id}, this.value)" onclick="event.stopPropagation()">
+                        ${totalUnavail > 0 ? `<span class="bg-indigo-800 text-indigo-100 text-[10px] px-1.5 py-0.5 rounded-full">${totalUnavail}</span>` : ''}
+                        <button class="text-indigo-300 hover:text-white ml-1" onclick="removeUser(${user.id}); event.stopPropagation();"><i class="fa-solid fa-xmark"></i></button>
+                    `;
+                } else {
+                    btn.innerHTML = `
+                        <span>${user.name}</span>
+                        ${totalUnavail > 0 ? `<span class="bg-slate-200 text-slate-600 text-[10px] px-1.5 py-0.5 rounded-full">${totalUnavail}</span>` : ''}
+                    `;
+                    btn.onclick = () => { selectUser(user.id); };
+                }
+                els.usersContainer.appendChild(btn);
+            });
+        }
+
+        function renderCalendar() {
+            const year = state.calendarMonth.getFullYear();
+            const month = state.calendarMonth.getMonth();
+            els.calendarTitle.textContent = `${year}년 ${month + 1}월`;
+            els.calendarDays.innerHTML = '';
+
+            const firstDayOfMonth = new Date(year, month, 1);
+            const lastDayOfMonth = new Date(year, month + 1, 0);
+            
+            let days = [];
+            
+            const startPadding = firstDayOfMonth.getDay();
+            for (let i = startPadding - 1; i >= 0; i--) {
+                days.push({ date: new Date(year, month, -i), isCurrentMonth: false });
+            }
+            
+            for (let i = 1; i <= lastDayOfMonth.getDate(); i++) {
+                days.push({ date: new Date(year, month, i), isCurrentMonth: true });
+            }
+            
+            const endPadding = 42 - days.length;
+            for (let i = 1; i <= endPadding; i++) {
+                days.push({ date: new Date(year, month + 1, i), isCurrentMonth: false });
+            }
+
+            let html = '';
+            for (let i = 0; i < days.length; i += 7) {
+                const weekDays = days.slice(i, i + 7);
+                const weekNum = getWeekNumber(weekDays[0].date);
+                
+                html += `<div class="calendar-grid flex-1">`;
+                html += `<div class="flex items-center justify-center text-[10px] text-slate-400 font-medium bg-slate-50 border-r border-slate-100">${weekNum}</div>`;
+                
+                weekDays.forEach(dayObj => {
+                    const dateStr = formatDate(dayObj.date);
+                    const dayOfWeek = dayObj.date.getDay();
+                    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+                    const holidayName = getHolidayName(dateStr);
+                    const isHoliday = !!holidayName;
+                    
+                    let bgClass = 'bg-white';
+                    let indicatorHtml = '';
+                    let cursorClass = 'cursor-pointer';
+                    
+                    const isExcludedHoliday = isHoliday && state.excludeHolidays;
+                    if (isWeekend || isExcludedHoliday) {
+                        bgClass = 'bg-slate-200 opacity-60';
+                        cursorClass = 'cursor-not-allowed';
+                    } else if (dayObj.isCurrentMonth) {
+                        const intervals = getAvailableIntervalsForDate(dateStr);
+                        const totalAvailableMins = intervals.reduce((acc, cur) => acc + (cur.end - cur.start), 0);
+
+                        // 캘린더 세 가지 상태 구분 (전체가능, 부분가능, 불가능)
+                        if (totalAvailableMins === TOTAL_DURATION) {
+                            indicatorHtml = `<div class="absolute bottom-1 text-[8px] font-bold text-teal-600 leading-none">전체가능</div>`;
+                        } else if (totalAvailableMins > 0) {
+                            indicatorHtml = `<div class="absolute bottom-1 text-[8px] font-bold text-amber-600 leading-none">부분가능</div>`;
+                        } else {
+                            indicatorHtml = `<div class="absolute bottom-1 text-[8px] font-bold text-rose-600 leading-none">불가능</div>`;
+                        }
+                    }
+
+                    let textColor = 'text-slate-700';
+                    if (!dayObj.isCurrentMonth) textColor = 'text-slate-300';
+                    else if (dayOfWeek === 0 || isHoliday) textColor = 'text-red-500 font-bold';
+                    else if (dayOfWeek === 6) textColor = 'text-blue-500 font-bold';
+
+                    const isToday = dateStr === state.baseDate;
+                    
+                    let borderClass = 'border-r border-b border-slate-100';
+                    if (dateStr === state.selectedDate) {
+                        borderClass = 'border-2 border-indigo-500 shadow-inner z-10';
+                    } else if (isToday) {
+                        borderClass = 'border border-slate-400 z-0';
+                    }
+
+                    let onClickAction = '';
+                    if (!isWeekend && !isExcludedHoliday) {
+                        if (state.selectedUserId === 'ALL') {
+                            onClickAction = `onclick="openDateDetails('${dateStr}')"`;
+                        } else {
+                            onClickAction = `onclick="selectDate('${dateStr}')"`;
+                        }
+                    }
+
+                    html += `
+                        <div class="relative p-1 sm:p-1.5 h-14 sm:h-16 flex flex-col items-center justify-start transition-colors ${bgClass} ${borderClass} ${cursorClass}"
+                             ${onClickAction}>
+                            <span class="text-xs sm:text-sm ${textColor}">${dayObj.date.getDate()}</span>
+                            ${isHoliday && dayObj.isCurrentMonth ? `<span class="text-[8px] sm:text-[9px] text-red-500 font-medium leading-tight text-center mt-0.5 truncate w-full px-0.5">${holidayName}</span>` : ''}
+                            ${indicatorHtml}
+                        </div>
+                    `;
+                });
+                html += `</div>`;
+            }
+            els.calendarDays.innerHTML = html;
+        }
+
+        function renderCustomHolidaysList() {
+            els.customHolidayList.innerHTML = '';
+            const keys = Object.keys(state.customHolidays);
+            if (keys.length === 0) {
+                els.customHolidayList.innerHTML = `<li class="p-3 text-slate-400 text-center text-xs">등록된 자체 공휴일이 없습니다.</li>`;
+                return;
+            }
+            keys.sort().forEach(dateStr => {
+                const name = state.customHolidays[dateStr];
+                const li = document.createElement('li');
+                li.className = 'flex justify-between items-center px-3 py-2 bg-white hover:bg-slate-50';
+                li.innerHTML = `
+                    <div><strong class="text-indigo-600">${dateStr}</strong> <span class="text-slate-600 ml-1">(${name})</span></div>
+                    <button onclick="removeCustomHoliday('${dateStr}')" class="text-red-400 hover:text-red-600 p-1"><i class="fa-regular fa-trash-can"></i></button>
+                `;
+                els.customHolidayList.appendChild(li);
+            });
+        }
+
+        function renderInputPanel() {
+            if (!state.selectedDate || state.selectedUserId === 'ALL') {
+                els.inputPanel.classList.add('hidden');
+                return;
+            }
+            els.inputPanel.classList.remove('hidden');
+            els.inputPanelDateTitle.textContent = state.selectedDate;
+            
+            els.startTimeInput.value = "14:20";
+            els.endTimeInput.value = "16:20";
+            els.reasonInput.value = "";
+
+            const activeUser = state.users.find(u => u.id === state.selectedUserId);
+            const dayUnavails = activeUser ? activeUser.unavailabilities.filter(u => u.date === state.selectedDate) : [];
+            
+            els.selectedDateUnavailList.innerHTML = '';
+            if (dayUnavails.length === 0) {
+                els.selectedDateUnavailList.innerHTML = `<li class="text-xs text-slate-400 py-2">등록된 일정이 없습니다.</li>`;
+            } else {
+                dayUnavails.sort((a,b) => timeToMins(a.startTime) - timeToMins(b.startTime)).forEach(u => {
+                    const li = document.createElement('li');
+                    li.className = 'flex justify-between items-center bg-white px-3 py-2 rounded border border-indigo-100 shadow-sm text-sm fade-in';
+                    li.innerHTML = `
+                        <div>
+                            <span class="font-bold text-indigo-700">${u.startTime} ~ ${u.endTime}</span>
+                            ${u.reason ? `<span class="text-xs text-slate-500 ml-2">(${u.reason})</span>` : ''}
+                        </div>
+                        <button onclick="removeUnavailability('${u.id}')" class="text-red-400 hover:text-red-600 p-1 rounded hover:bg-red-50 transition"><i class="fa-regular fa-trash-can"></i></button>
+                    `;
+                    els.selectedDateUnavailList.appendChild(li);
+                });
+            }
+        }
+
+        function calculateAndRenderResults() {
+            els.resultsContainer.innerHTML = '<div class="flex justify-center py-10"><i class="fa-solid fa-spinner fa-spin text-2xl text-slate-300"></i></div>';
+            
+            setTimeout(() => {
+                const results = [];
+                const base = new Date(state.baseDate);
+                
+                // 180일간 검토
+                for (let i = 0; i < 180; i++) {
+                    const d = new Date(base);
+                    d.setDate(base.getDate() + i);
+                    const dateStr = formatDate(d);
+                    const dayOfWeek = d.getDay();
+                    
+                    if (dayOfWeek === 0 || dayOfWeek === 6) continue;
+                    if (state.excludeHolidays && isHolidayDate(dateStr)) continue;
+
+                    let availableIntervals = getAvailableIntervalsForDate(dateStr);
+
+                    if (availableIntervals.length > 0) {
+                        results.push({
+                            date: dateStr,
+                            dayName: ['일', '월', '화', '수', '목', '금', '토'][dayOfWeek],
+                            intervals: availableIntervals
+                        });
+                    }
+                }
+
+                renderResults(results);
+            }, 100);
+        }
+
+        function renderResults(results) {
+            els.resultsContainer.innerHTML = '';
+            
+            if (results.length === 0) {
+                els.resultsContainer.innerHTML = `
+                    <div class="flex flex-col items-center justify-center h-full text-center p-6 text-slate-500 bg-white rounded-xl border border-dashed border-slate-300">
+                        <i class="fa-regular fa-face-frown-open text-4xl mb-3 text-slate-300"></i>
+                        <p class="font-medium text-lg">모두가 가능한 시간이 없습니다.</p>
+                        <p class="text-sm mt-1 text-slate-400">일정을 다시 조율하거나 참여자들의 예외 시간을 확인해보세요.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            const listWrapper = document.createElement('div');
+            listWrapper.className = 'flex flex-col space-y-2';
+
+            results.forEach(res => {
+                const card = document.createElement('div');
+                card.className = 'bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 shadow-sm hover:shadow transition flex items-center justify-between';
+                
+                let intervalsText = res.intervals.map(slot => `${minsToTime(slot.start)} ~ ${minsToTime(slot.end)}`).join(', ');
+
+                card.innerHTML = `
+                    <span class="font-bold text-slate-800 text-xs flex items-center gap-1.5 flex-shrink-0">
+                        <i class="fa-regular fa-calendar text-indigo-500"></i> ${res.date} (${res.dayName})
+                    </span>
+                    <span class="inline-flex items-center gap-1 bg-teal-50 text-teal-700 border border-teal-200 px-2.5 py-1 rounded-lg text-xs font-bold truncate ml-2">
+                        <i class="fa-regular fa-clock"></i> ${intervalsText}
+                    </span>
+                `;
+                listWrapper.appendChild(card);
+            });
+
+            els.resultsContainer.appendChild(listWrapper);
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            els.baseDateInput.value = state.baseDate;
+
+            // 전역 이벤트: 모든 입력창(input)에서 엔터키 입력 시 의도치 않은 폼 제출/페이지 이동 완벽 차단
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
+                    e.preventDefault();
+                    e.target.blur(); // 포커스를 해제하여 onchange 이벤트를 자연스럽게 트리거함
+                }
+            });
+
+            // Initialize Firebase real-time sync
+            initFirebase();
+
+            // Share Room Button
+        els.shareRoomBtn.onclick = () => {
+            let currentHref = window.location.href;
+            let shareUrl = "";
+
+            // 만약 로컬 파일 경로(file:///)로 열려있다면 다른 컴퓨터에서 접근할 수 없으므로 안내 및 가이드 제공
+            if (currentHref.startsWith('file:///')) {
+                // 사용자가 깃허브 페이지, Vercel, Netlify 또는 웹 서버에 올렸거나 배포한 주소가 있다면 대체할 수 있도록 안내
+                const userHost = prompt("현재 컴퓨터의 로컬 파일(C드라이브) 경로로 실행 중입니다.\n다른 컴퓨터에서 접속하려면 웹 주소(예: 호스팅된 URL 또는 Netlify/GitHub Pages 주소)가 필요합니다.\n\n공유할 웹 서비스 주소를 입력하거나, 그대로 확인을 누르면 현재 방 번호가 포함된 안내가 복사됩니다.\n(예: https://your-domain.com/index.html)", "https://");
+                
+                if (userHost && userHost !== "https://") {
+                    let cleanBase = userHost.split('?')[0].split('#')[0];
+                    shareUrl = `${cleanBase}?room=${roomId}`;
+                } else {
+                    shareUrl = `[로컬 파일 실행 중 - 웹 호스팅 필요] 방 ID: ${roomId}\n(이 파일을 웹 서버나 Vercel/GitHub Pages 등에 업로드한 후 링크를 공유해주세요!)`;
+                }
+            } else {
+                let cleanBase = currentHref.split('?')[0].split('#')[0];
+                shareUrl = `${cleanBase}?room=${roomId}`;
+            }
+            
+            // 클립보드 복사 시도
+            const tempInput = document.createElement('textarea');
+            tempInput.value = shareUrl;
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            try {
+                document.execCommand('copy');
+                if (shareUrl.startsWith('file:///') || shareUrl.includes('[로컬 파일')) {
+                    showMessage("로컬 파일 경로입니다. 다른 컴퓨터에서 사용하시려면 웹 서버나 무료 호스팅(Vercel, GitHub Pages 등)에 파일을 올린 후 공유 링크를 생성해주세요.\n\n안내 문구가 클립보드에 복사되었습니다.");
+                } else {
+                    showMessage("방 링크가 정상적으로 복사되었습니다!\n\n복사된 주소:\n" + shareUrl);
+                }
+            } catch (err) {
+                showMessage("링크 복사 실패: " + shareUrl);
+            }
+            document.body.removeChild(tempInput);
+        };
+
+        // Event Listeners
+            els.baseDateInput.onchange = (e) => {
+                if (e.target.value) {
+                    state.baseDate = e.target.value;
+                    state.calendarMonth = new Date(e.target.value);
+                    syncToFirestore();
+                    renderCalendar();
+                    calculateAndRenderResults();
+                }
+            };
+
+            els.excludeHolidaysToggle.onchange = (e) => {
+                state.excludeHolidays = e.target.checked;
+                syncToFirestore();
+                renderCalendar();
+                calculateAndRenderResults();
+            };
+
+            els.prevMonthBtn.onclick = () => {
+                state.calendarMonth.setMonth(state.calendarMonth.getMonth() - 1);
+                renderCalendar();
+            };
+
+            els.nextMonthBtn.onclick = () => {
+                state.calendarMonth.setMonth(state.calendarMonth.getMonth() + 1);
+                renderCalendar();
+            };
+
+            els.addUserBtn.onclick = () => {
+                const newId = state.users.length > 0 ? Math.max(...state.users.map(u => u.id)) + 1 : 1;
+                state.users.push({ id: newId, name: `참여자 ${newId}`, unavailabilities: [] });
+                selectUser(newId);
+                syncToFirestore();
+                calculateAndRenderResults();
+            };
+
+            els.closePanelBtn.onclick = () => {
+                state.selectedDate = null;
+                renderCalendar();
+                renderInputPanel();
+            };
+
+            els.closeDateDetailsModal.onclick = () => {
+                els.dateDetailsModal.classList.add('hidden');
+            };
+
+            els.addTimeBtn.onclick = () => {
+                if (!state.selectedDate || state.selectedUserId === 'ALL') return;
+                
+                const startStr = els.startTimeInput.value;
+                const endStr = els.endTimeInput.value;
+                const reason = els.reasonInput.value.trim();
+
+                const startMins = timeToMins(startStr);
+                const endMins = timeToMins(endStr);
+
+                if (startMins >= endMins) {
+                    showMessage("종료 시간은 시작 시간보다 이후여야 합니다.");
+                    return;
+                }
+
+                if (startMins < MIN_TIME || endMins > MAX_TIME) {
+                    showMessage("시간은 14:20 ~ 16:20 사이 범위여야 합니다.");
+                    return;
+                }
+
+                const activeUser = state.users.find(u => u.id === state.selectedUserId);
+                if (activeUser) {
+                    activeUser.unavailabilities.push({
+                        id: 'unav_' + Math.random().toString(36).substr(2, 9),
+                        date: state.selectedDate,
+                        startTime: startStr,
+                        endTime: endStr,
+                        reason: reason
+                    });
+                    syncToFirestore();
+                    renderInputPanel();
+                    renderCalendar();
+                    calculateAndRenderResults();
+                }
+            };
+
+            // Custom Holiday Modal
+            els.openCustomHolidayModal.onclick = () => {
+                renderCustomHolidaysList();
+                els.holidayModal.classList.remove('hidden');
+            };
+            els.closeHolidayModal.onclick = () => els.holidayModal.classList.add('hidden');
+
+            els.addHolidayBtn.onclick = () => {
+                const dateVal = els.newHolidayDate.value;
+                const nameVal = els.newHolidayName.value.trim();
+
+                if (!dateVal || !nameVal) {
+                    showMessage("날짜와 사유를 모두 입력해주세요.");
+                    return;
+                }
+
+                state.customHolidays[dateVal] = nameVal;
+                els.newHolidayDate.value = '';
+                els.newHolidayName.value = '';
+                syncToFirestore();
+                renderCustomHolidaysList();
+                renderCalendar();
+                calculateAndRenderResults();
+            };
+
+            // 자체 일정 추가 기능 (시간 단위 불가능한 시간 설정)
+            els.addCustomSchBtn.onclick = () => {
+                const dateVal = els.customSchDate.value;
+                const reasonVal = els.customSchReason.value.trim() || '자체 일정';
+                const startStr = els.customSchStart.value;
+                const endStr = els.customSchEnd.value;
+
+                if (!dateVal) {
+                    showMessage("날짜를 선택해주세요.");
+                    return;
+                }
+
+                const startMins = timeToMins(startStr);
+                const endMins = timeToMins(endStr);
+
+                if (startMins >= endMins) {
+                    showMessage("종료 시간은 시작 시간보다 이후여야 합니다.");
+                    return;
+                }
+
+                if (startMins < MIN_TIME || endMins > MAX_TIME) {
+                    showMessage("시간은 14:20 ~ 16:20 사이 범위여야 합니다.");
+                    return;
+                }
+
+                state.users.forEach(user => {
+                    user.unavailabilities.push({
+                        id: 'sch_' + Math.random().toString(36).substr(2, 9),
+                        date: dateVal,
+                        startTime: startStr,
+                        endTime: endStr,
+                        reason: reasonVal
+                    });
+                });
+
+                els.customSchDate.value = '';
+                els.customSchReason.value = '';
+                els.holidayModal.classList.add('hidden');
+                syncToFirestore();
+                renderCalendar();
+                calculateAndRenderResults();
+                showMessage("모든 참여자에게 해당 일정(불가 시간)이 성공적으로 추가되었습니다.");
+            };
+
+            // Initial Render
+            renderUsers();
+            renderCalendar();
+            calculateAndRenderResults();
+        });
+    </script>
+</body>
+</html>
